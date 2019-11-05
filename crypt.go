@@ -1,7 +1,7 @@
 package main
 
 import (
-    "crypto/aes"
+	"crypto/des"
     "crypto/cipher"
     "crypto/rand"
     "crypto/sha1"
@@ -9,52 +9,79 @@ import (
     "fmt"
     "strings"
     "encoding/base64"
+	"bytes"
 )
 
-func encrypt(json []byte) []byte {
-	block, err := aes.NewCipher([]byte(secret))
+func zeroPadding(ciphertext []byte, blockSize int) []byte {
+	padding := blockSize - len(ciphertext) % blockSize
+	padtext := bytes.Repeat([]byte{0}, padding)
+	return append(ciphertext, padtext...)
+}
+
+func zeroUnPadding(origData []byte) []byte {
+	return bytes.TrimFunc(
+		origData,
+		func(r rune) bool {
+			return r == rune(0)
+		})
+}
+
+func getBlock(secret []byte) (cipher.Block) {
+	for len(secret) < 24 {
+		secret = append(secret, secret...)
+	}
+	secret = secret[:24]
+
+	block, err := des.NewTripleDESCipher(secret)
 	if err != nil {
 		panic(err)
 	}
 
-	// The IV needs to be unique, but not secure. Therefore it's common to
-	// include it at the beginning of the ciphertext.
-	ciphertext := make([]byte, aes.BlockSize+len(json))
-	iv := ciphertext[:aes.BlockSize]
+	return block
+}
+
+func encrypt(text []byte, secret []byte) []byte {
+	block := getBlock(secret)
+	text = zeroPadding(text, block.BlockSize())
+
+	cipherText := make([]byte, block.BlockSize()+len(text))
+	iv := cipherText[:block.BlockSize()]
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		panic(err)
 	}
 
 	stream := cipher.NewCFBEncrypter(block, iv)
-	stream.XORKeyStream(ciphertext[aes.BlockSize:], json)
+	stream.XORKeyStream(cipherText[block.BlockSize():], text)
 
-	// convert to base64
-	return ciphertext
+	return cipherText
 }
 
-func decrypt(cryptoText []byte) []byte {
-	block, err := aes.NewCipher([]byte(secret))
-	if err != nil {
-		panic(err)
-	}
+func decrypt(cryptedText []byte, secret []byte) []byte {
+	block := getBlock(secret)
 
 	// The IV needs to be unique, but not secure. Therefore it's common to
 	// include it at the beginning of the ciphertext.
-	if len(cryptoText) < aes.BlockSize {
+	if len(cryptedText) < block.BlockSize() {
 		panic("ciphertext too short")
 	}
-	iv := cryptoText[:aes.BlockSize]
-	cryptoText = cryptoText[aes.BlockSize:]
+	iv := cryptedText[:block.BlockSize()]
+	cryptedText = cryptedText[block.BlockSize():]
 
 	stream := cipher.NewCFBDecrypter(block, iv)
 
 	// XORKeyStream can work in-place if the two arguments are the same.
-	stream.XORKeyStream(cryptoText, cryptoText)
-	return cryptoText
+	stream.XORKeyStream(cryptedText, cryptedText)
+	return zeroUnPadding(cryptedText)
 }
 
-func createPass(params, secret string) (pass string) {
-    params = params + secret
+func createPass(params string, secret []byte, length int) (pass string) {
+    params = params + string(secret)
     sum := fmt.Sprintf("%x", sha1.Sum([]byte(params)))
-    return strings.TrimRight(base64.StdEncoding.EncodeToString([]byte(sum)), "=")
+	pass = strings.TrimRight(base64.StdEncoding.EncodeToString([]byte(sum)), "=")
+	if (len(pass) < length) {
+		pass = pass + createPass(pass, secret, length)
+	} else {
+		pass = pass[:length]
+	}
+	return pass
 }

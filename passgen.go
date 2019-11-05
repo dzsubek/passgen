@@ -6,18 +6,16 @@ import (
     "io/ioutil"
     "encoding/json"
     "github.com/dgryski/dgoogauth"
+    "github.com/howeyc/gopass"
+    //"crypto/sha1"
 )
 
-var secret = "YPC3RyUa4XemGPhQ"
-
-var setup = flag.Bool("init", false, "initialize new keys")
-var keyFile = flag.String("keyFile", "", "initialize new keys")
+var isSetup = flag.Bool("init", false, "setup new keys")
+var keyFile = flag.String("keyFile", "", "setup new keys")
 
 type KeyInfo struct {
     Name string
     Otp dgoogauth.OTPConfig
-    Params []string
-    PassLength int
 }
 
 func init() {
@@ -27,42 +25,54 @@ func init() {
     }
 }
 
-func getInfo() KeyInfo {
+func getInfo(masterPass []byte) KeyInfo {
     file, err := ioutil.ReadFile(*keyFile)
     if (err != nil) {
         fmt.Println(err)
         panic(err)
     }
     
-    var params KeyInfo
-    json.Unmarshal(decrypt(file), &params)
+    var info KeyInfo
+    err = json.Unmarshal(decrypt(file, masterPass), &info)
+    if (err != nil) {
+        panic("Can not read configuration, may master password is wrong")
+    }
+    return info
+}
 
-    return params
+func getMasterPass() []byte  {
+    fmt.Printf("Enter master password: ")
+    masterPass, err := gopass.GetPasswd()
+    if err != nil {
+        panic(err)
+    }
+
+    return []byte(masterPass)
 }
 
 func main() {
-    if *setup {
-        initialize()
+    if *isSetup {
+        setup()
     } else {
-        info := getInfo()
+        masterPass := getMasterPass()
+        info := getInfo(masterPass)
+
+        fmt.Println(info.Name);
         otp := info.Otp
-        var passcode = readParam("Passcode: ")
-        
+        var passcode = readParam("Authenticator passcode: ")
+
         success, err := otp.Authenticate(passcode)
         if(!success || err != nil) {
-            panic("Invalid passcode")
+             panic("Invalid passcode")
         }
 
-        var params string
-        for _, param := range info.Params {
-            params = params + readParam(param + ": ")
+		param := readParam("Generate password for: ")
+        length := len(masterPass) + len(param)
+        if length < 8 {
+            length = 8
         }
-        
-        pass := createPass(params, info.Otp.Secret)
-        for len(pass) < info.PassLength {
-            pass = pass + createPass(params, pass)
-        }
-        pass = pass[:info.PassLength]
-        fmt.Println(pass)
+
+		pass := createPass(param, masterPass, length)
+		fmt.Println(pass)
     }
 }

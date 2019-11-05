@@ -8,7 +8,6 @@ import (
     "crypto/rand"
     "encoding/json"
     "io/ioutil"
-    "strconv"
     "net/url"
 )
 
@@ -30,25 +29,13 @@ func createOTP() (otp dgoogauth.OTPConfig){
     return dgoogauth
 }
 
-func initialize() {
+func setup() {
     fmt.Println("Start PassGen Setup")
     
     info := KeyInfo{}
     info.Name = readParam("Your email address or user name or nick or whaterver: ")
-    len, err := strconv.Atoi(readParam("Passwords length: "))
-    if (err != nil || len < 8) {
-        panic("Invalid password length (min: 8)")
-    }
-    info.PassLength = len
 
-    var params []string
-    var text = readParam("Password parameter: ")
-    for text != "" {
-        params = append(params, text)
-        text = readParam("Password parameter: ")
-    }
-
-    info.Params = params
+    masterPass := getMasterPass()
     otp := createOTP()
     info.Otp = otp
     
@@ -57,7 +44,7 @@ func initialize() {
         panic(err)
     }
     
-    err = ioutil.WriteFile(*keyFile, encrypt(json), 0600)
+    err = ioutil.WriteFile(*keyFile, encrypt(json, masterPass), 0600)
     if err != nil {
         panic(err)
     }
